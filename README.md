@@ -1,5 +1,7 @@
 # Terminal UI Text chat
 
+*Work in progress*
+
 ![alt text](preview.png)
 
 *Works in local network only*
