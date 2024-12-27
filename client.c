@@ -13,6 +13,7 @@
 WINDOW *pad;
 unsigned int nMessages = 0;
 int padPos = 0;
+char userList[10][10];
 
 struct data {
     char message[256];
@@ -81,6 +82,7 @@ void *receiveData(void *arg){
 
     while(strcmp(recvData->message, "!exit") != 0){
         int bytes_read = read(sockfd, recvData, sizeof(struct data));
+        strcpy(userList[1], recvData->username);
         timeinfo = getTime(recvData->time);
         if(bytes_read > 0){
             wprintw(pad, "[%d:%d:%02d] %s: %s\n", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, recvData->username, recvData->message);
@@ -112,6 +114,7 @@ int inputLoop(char *username, int sockfd){
     pthread_create(&dataReceiver, NULL, receiveData, (void*)sockfd);
 
     strcpy(sendData->username, username);
+    strcpy(userList[0], username);
     while(strcmp(sendData->message, "!exit") != 0){
         getstr(sendData->message);
         //fileLog(sendData->message);
@@ -121,7 +124,12 @@ int inputLoop(char *username, int sockfd){
                 wprintw(pad, "Commands:\n\t'!exit' disconnects from the server\n\t'!users' list users in the chat\n");
                 nMessages = nMessages + 2;
             }else if(strcmp(sendData->message, "!users") == 0){
-                wprintw(pad, "This should list currently connected users.\n");
+                wprintw(pad, "\tConnected users:\n");
+                for(int i=0; i < sizeof(userList)/sizeof(userList[0]); i++){
+                    if(userList[i][0] != NULL){
+                        wprintw(pad, "\t- %s\n", userList[i]);
+                    }
+                }
                 nMessages++;
             }
         }else{
