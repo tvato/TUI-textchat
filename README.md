@@ -10,4 +10,5 @@
 
 ## TODO:
 - More commands
+- Implement multiple connections
 - Implement connection over public network
