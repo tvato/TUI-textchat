@@ -17,6 +17,7 @@ int padPos = 0;
 struct data {
     char message[256];
     char username[10];
+    time_t time;
 };
 
 int fileLog(const char *logMessage){
@@ -30,6 +31,21 @@ int fileLog(const char *logMessage){
     time(&rawTime);
     timeinfo = localtime(&rawTime);
     fprintf(f, "[%d:%d:%02d]: %s\n", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, logMessage);
+    fclose(f);
+    return 0;
+}
+
+int fileLogInt(const int logMessage){
+    FILE *f;
+    f = fopen("client.log", "a+");
+    if(f == NULL){
+        return 1;
+    }
+    time_t rawTime;
+    struct tm *timeinfo;
+    time(&rawTime);
+    timeinfo = localtime(&rawTime);
+    fprintf(f, "[%d:%d:%02d]: %d\n", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, logMessage);
     fclose(f);
     return 0;
 }
@@ -52,19 +68,54 @@ void createTUI(char *address){
     refresh();
 }
 
+struct tm* getTime(time_t rawTime){
+    time(&rawTime);
+    return localtime(&rawTime);
+}
+
+void *receiveData(void *arg){
+    struct data *recvData = (struct data*)malloc(sizeof(struct data));
+    time_t rawTime;
+    struct tm *timeinfo;
+    int sockfd = (int)arg;
+
+    while(strcmp(recvData->message, "!exit") != 0){
+        int bytes_read = read(sockfd, recvData, sizeof(struct data));
+        timeinfo = getTime(recvData->time);
+        if(bytes_read > 0){
+            wprintw(pad, "[%d:%d:%02d] %s: %s\n", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, recvData->username, recvData->message);
+
+            if(nMessages < LINES-4){
+                nMessages++;
+            }else{
+                nMessages++;
+                padPos++;
+            }
+
+            prefresh(pad, padPos, 0, 2, 0, LINES-3, COLS);
+            move(LINES-1, 0);
+            clrtoeol();
+            printw("> ");
+            refresh();
+        }
+    }
+
+    free(recvData);
+}
+
 int inputLoop(char *username, int sockfd){
     time_t rawTime;
     struct tm *timeinfo;
     struct data *sendData = (struct data*)malloc(sizeof(struct data));
 
+    pthread_t dataReceiver;
+    pthread_create(&dataReceiver, NULL, receiveData, (void*)sockfd);
 
     strcpy(sendData->username, username);
     while(strcmp(sendData->message, "!exit") != 0){
         getstr(sendData->message);
         //fileLog(sendData->message);
         wmove(pad, nMessages, 0);
-        time(&rawTime);
-        timeinfo = localtime(&rawTime);
         if(sendData->message[0] == '!'){
             if(strcmp(sendData->message, "!commands") == 0){
                 wprintw(pad, "Commands:\n\t'!exit' disconnects from the server\n\t'!users' list users in the chat\n");
@@ -74,7 +125,9 @@ int inputLoop(char *username, int sockfd){
                 nMessages++;
             }
         }else{
+            timeinfo = getTime(rawTime);
             wprintw(pad, "[%d:%d:%02d] %s: %s\n", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, sendData->username, sendData->message);
+            sendData->time = rawTime;
             write(sockfd, sendData, sizeof(struct data));
         }
 
@@ -101,7 +154,6 @@ int inputLoop(char *username, int sockfd){
         printw("> ");
         refresh();
     }
-
 
     free(sendData);
     return 0;
@@ -134,10 +186,68 @@ int createClient(char *ip_address, char *username){
     return 0;
 }
 
-void *createServer(){
-    //***********************************************************************
-    fileLog("createServer called");
-    //***********************************************************************
+void *listenConnections(void *arg){
+    int sockfd = (int)arg;
+    struct sockaddr_in con_addr;
+    int clientfd[10] = {0};
+    int clientIndex = 0;
+
+    while(1){
+        socklen_t addrlen = sizeof(con_addr);
+        clientfd[clientIndex] = accept(sockfd, (struct sockaddr*)&con_addr, &addrlen);
+        if(clientfd < 0){
+            fileLog("Connection accept failed...\n");
+            return 1;
+        }
+        clientIndex++;
+        if(clientIndex > 10){
+            break;
+        }
+    }
+}
+
+int createServer(char *address, char *username){
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if(sockfd < 0){ fileLog("Server sockfd failed...\n"); return 1; }
+    int clientfd = 0;
+    int clientIndex = 0;
+
+    struct sockaddr_in server_addr;
+    struct sockaddr_in con_addr;
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(6666);
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if(bind(sockfd, (struct sockaddr*)&server_addr, sizeof(struct sockaddr)) < 0){
+        fileLog("server bind failed...\n");
+        return 1;
+    }
+
+    if(listen(sockfd, 10) < 0){
+        fileLog("Server listen failed...\n");
+        return 0;
+    }
+    
+    socklen_t addrlen = sizeof(con_addr);
+    clientfd = accept(sockfd, (struct sockaddr*)&con_addr, &addrlen);
+    if(clientfd < 0){
+        fileLog("Connection accept failed...\n");
+        return 1;
+    }
+
+    //pthread_t listeningThread;
+    //pthread_create(&listeningThread, NULL, listenConnections, (void*)sockfd);
+
+    createTUI(address);
+    inputLoop(username, clientfd);
+
+    close(sockfd);
+
+    return 0;
+}
+
+void *createServer2(char *address, char *username){
     int sockfd = 0;
     int clientfd = 0;
     int bytes_read = 0;
@@ -154,10 +264,6 @@ void *createServer(){
         return NULL;
     }
 
-    //***********************************************************************
-    fileLog("Socket created");
-    //***********************************************************************
-
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(6666);
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -169,20 +275,12 @@ void *createServer(){
         return NULL;
     }
 
-    //***********************************************************************
-    fileLog("Bind succesful");
-    //***********************************************************************
-
     int listenfd = listen(sockfd, 3);
     if(listenfd < 0){
         printf("Listenfd failed... %d\n", listenfd);
         pthread_exit(NULL);
         return NULL;
     }
-
-    //***********************************************************************
-    fileLog("Listen succesful");
-    //***********************************************************************
 
     socklen_t addrlen = sizeof(conn_addr);
     clientfd = accept(sockfd, (struct sockaddr*)&conn_addr, &addrlen);
@@ -191,10 +289,6 @@ void *createServer(){
         pthread_exit(NULL);
         return NULL;
     }
-
-    //***********************************************************************
-    fileLog("Connection accepted");
-    //***********************************************************************
 
     time_t rawTime;
     struct tm *timeinfo;
@@ -244,15 +338,19 @@ int main(int argc, char **argv){
     char *username = "";
     char *address = "";
     int opt;
+    bool isHosting = false;
     pthread_t server_thread;
 
-    while((opt = getopt(argc, argv, "c:u:")) != -1){
+    while((opt = getopt(argc, argv, "c:u:h")) != -1){
         switch(opt){
             case 'c':
                 address = optarg;
                 break;
             case 'u':
                 username = optarg;
+                break;
+            case 'h':
+                isHosting = true;
                 break;
             case '?':
                 fprintf(stderr, "No options given");
@@ -263,12 +361,16 @@ int main(int argc, char **argv){
         }
     }
 
-    pthread_create(&server_thread, NULL, createServer, NULL);
-    pthread_detach(server_thread);
+    //pthread_create(&server_thread, NULL, createServer, NULL);
+    //pthread_detach(server_thread);
     
     //fileLog("Thread created");
     //fileLog(address);
-    createClient(address, username);
+    if(isHosting){
+        createServer(address, username);
+    }else{
+        createClient(address, username);
+    }
 
     delwin(pad);
     endwin();
