@@ -9,6 +9,5 @@
 *Works in local network only*
 
 ## TODO:
-- Proper server hosting
-- More commands/modify commands
+- More commands
 - Implement connection over public network
